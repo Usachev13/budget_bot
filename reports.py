@@ -1,5 +1,5 @@
 """Подсчёты для бота и дашборда."""
-import datetime as dt
+import re, datetime as dt
 import config, db
 
 def month_key(d=None):
@@ -111,6 +111,38 @@ def relocation():
     return {"have": ils, "goal": config.RELOCATION_GOAL_ILS, "need": need,
             "months_left": months_left, "per_month": need / months_left,
             "per_month_rub": need / months_left * db.rate("ILS")}
+
+MERCHANT_STRIP = re.compile(r"[\d№#]+[\d\-/.]*")
+
+STOP_TAIL = ("заказ", "без ндс", "номер", "перевод по сбп", "покупка")
+
+def merchant_key(note):
+    """Ключ продавца: описание без номеров заказов, хвостов и лишних знаков."""
+    s = (note or "").lower()
+    for stop in STOP_TAIL:
+        s = s.split(stop)[0]
+    s = MERCHANT_STRIP.sub("", s)
+    s = re.sub(r"[^a-zа-яё ]+", " ", s)
+    words = [w for w in s.split() if len(w) > 1]
+    return " ".join(words)[:40] or "без описания"
+
+def unsorted_groups():
+    """Неразобранные операции, сгруппированные по продавцу. Самая крупная группа первой."""
+    with db.conn() as c:
+        rows = c.execute("SELECT id, date, amount_rub, note, type FROM txns WHERE category=''").fetchall()
+    groups = {}
+    for r in rows:
+        g = groups.setdefault(merchant_key(r["note"]), {"ids": [], "sum": 0.0, "note": r["note"], "date": r["date"]})
+        g["ids"].append(r["id"])
+        g["sum"] += r["amount_rub"]
+    out = [{"key": k, **v, "count": len(v["ids"])} for k, v in groups.items()]
+    return sorted(out, key=lambda g: (-g["count"], -g["sum"]))
+
+def apply_category_to_group(txn_ids, category):
+    with db.conn() as c:
+        kind = c.execute("SELECT kind FROM categories WHERE name=?", (category,)).fetchone()
+        c.executemany("UPDATE txns SET category=?, type=COALESCE(?,type) WHERE id=?",
+                      [(category, kind["kind"] if kind else None, i) for i in txn_ids])
 
 def unsorted_txns(limit=10):
     """Операции без категории — их бот предлагает разобрать."""

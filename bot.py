@@ -123,24 +123,25 @@ def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
     data = cb.get("data", "")
     call("answerCallbackQuery", callback_query_id=cb["id"])
-    if data.startswith("set|"):
+    if data.startswith("setg|"):
         _, tid, category = data.split("|", 2)
         with db.conn() as c:
             row = c.execute("SELECT note FROM txns WHERE id=?", (tid,)).fetchone()
-            kind = c.execute("SELECT kind FROM categories WHERE name=?", (category,)).fetchone()
-            c.execute("UPDATE txns SET category=?, type=COALESCE(?,type) WHERE id=?",
-                      (category, kind["kind"] if kind else None, tid))
-        if row and row["note"]:
-            # запоминаем магазин, чтобы в следующий раз категория подставилась сама
-            words = [w for w in row["note"].split() if len(w) > 3]
-            if words:
-                db.learn_rule(words[-1], category)
-        send(chat_id, f"Записал: {category}")
+        key = reports.merchant_key(row["note"] if row else "")
+        group = next((g for g in reports.unsorted_groups() if g["key"] == key), None)
+        ids = group["ids"] if group else [int(tid)]
+        reports.apply_category_to_group(ids, category)
+        if key and key != "без описания":
+            db.learn_rule(key[:40], category)   # в следующий раз подставится само
+        send(chat_id, f"Записал {len(ids)} операц. в «{category}»")
         return review_next(chat_id)
-    if data.startswith("skip|"):
+    if data.startswith("skipg|"):
         _, tid = data.split("|", 1)
         with db.conn() as c:
-            c.execute("UPDATE txns SET category='Непредвиденное' WHERE id=?", (tid,))
+            row = c.execute("SELECT note FROM txns WHERE id=?", (tid,)).fetchone()
+        key = reports.merchant_key(row["note"] if row else "")
+        group = next((g for g in reports.unsorted_groups() if g["key"] == key), None)
+        reports.apply_category_to_group(group["ids"] if group else [int(tid)], "Непредвиденное")
         return review_next(chat_id)
     if data.startswith("cat|"):
         category = data.split("|", 1)[1]
@@ -184,17 +185,19 @@ def set_card_debt(chat_id, text):
                          f"Чистая позиция: {money(np_['net'])}")
 
 def review_next(chat_id):
-    """Показывает операцию без категории и кнопки для выбора."""
-    items = reports.unsorted_txns(1)
-    if not items:
+    """Показывает самую крупную группу операций без категории и кнопки выбора."""
+    groups = reports.unsorted_groups()
+    if not groups:
         return send(chat_id, "Все операции разобраны.")
-    t = items[0]
-    left = reports.unsorted_count()
+    g = groups[0]
+    left = sum(x["count"] for x in groups)
     cats = reports.categories_for("expense") + reports.categories_for("transfer")
-    kb = [[{"text": c_, "callback_data": f"set|{t['id']}|{c_}"}] for c_ in cats]
-    kb.append([{"text": "Пропустить", "callback_data": f"skip|{t['id']}"}])
-    return send(chat_id, f"{t['date']} · {money(t['amount_rub'])}\n<code>{t['note'][:80]}</code>\n"
-                         f"Осталось разобрать: {left}", kb)
+    kb = [[{"text": c_, "callback_data": f"setg|{g['ids'][0]}|{c_}"}] for c_ in cats]
+    kb.append([{"text": "Пропустить группу", "callback_data": f"skipg|{g['ids'][0]}"}])
+    head = (f"<b>{g['count']} операций</b> на {money(g['sum'])}\n<code>{(g['note'] or '')[:80]}</code>"
+            if g["count"] > 1 else
+            f"{g['date']} · {money(g['sum'])}\n<code>{(g['note'] or '')[:80]}</code>")
+    return send(chat_id, f"{head}\nВсего без категории: {left}\nКакая категория?", kb)
 
 def undo_last(chat_id):
     with db.conn() as c:
