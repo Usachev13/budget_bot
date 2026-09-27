@@ -45,6 +45,7 @@ HELP = (
     "/день — траты за сегодня\n"
     "/разобрать — присвоить категории операциям из выписок\n"
     "долг 45000 — записать текущую задолженность по карте\n"
+    "поправь 1895 жильё — сменить категорию операции на эту сумму\n"
     "/отмена — удалить последнюю операцию\n"
     "/дашборд — ссылка на дашборд"
 )
@@ -95,6 +96,8 @@ def handle_text(chat_id, text):
         return review_next(chat_id)
     if low.startswith("долг"):
         return set_card_debt(chat_id, text)
+    if low.startswith(("поправь", "исправь")):
+        return fix_category(chat_id, text)
 
     op = parsing.parse(text)
     if not op or not op.get("amount"):
@@ -157,6 +160,29 @@ def handle_callback(cb):
         if k:
             op["type"] = k["kind"]
         return save_and_confirm(chat_id, op)
+
+def fix_category(chat_id, text):
+    """«поправь 1895 жильё» — меняет категорию у операции с такой суммой."""
+    m = re.search(r"([\d][\d \u00a0]*(?:[.,]\d+)?)\s+(.+)$", re.sub(r"^(поправь|исправь)", "", text, flags=re.I).strip())
+    if not m:
+        return send(chat_id, "Формат: «поправь 1895 жильё».")
+    amount = float(m.group(1).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    query = m.group(2).strip().lower()
+    with db.conn() as c:
+        cats = [r["name"] for r in c.execute("SELECT name FROM categories ORDER BY sort")]
+    match = [c_ for c_ in cats if c_.lower().startswith(query)] or [c_ for c_ in cats if query in c_.lower()]
+    if not match:
+        return send(chat_id, "Не нашёл такую категорию. Посмотри список в /итоги.")
+    category = match[0]
+    with db.conn() as c:
+        row = c.execute("""SELECT id, note FROM txns WHERE ROUND(amount_rub,2)=ROUND(?,2)
+                           ORDER BY date DESC, id DESC LIMIT 1""", (amount,)).fetchone()
+        if not row:
+            return send(chat_id, f"Операции на {money(amount)} не нашёл.")
+        kind = c.execute("SELECT kind FROM categories WHERE name=?", (category,)).fetchone()
+        c.execute("UPDATE txns SET category=?, type=COALESCE(?,type) WHERE id=?",
+                  (category, kind["kind"] if kind else None, row["id"]))
+    return send(chat_id, f"{money(amount)} → «{category}»\n<code>{(row['note'] or '')[:60]}</code>")
 
 def set_card_debt(chat_id, text):
     """«долг 45000» или «долг Озон 45000» — записывает задолженность по карте."""
