@@ -1,5 +1,5 @@
 """Логика телеграм-бота. Работает через webhook, без сторонних библиотек."""
-import json, datetime as dt, io
+import json, re, datetime as dt, io
 import requests
 import config, db, parsing, reports
 
@@ -44,6 +44,7 @@ HELP = (
     "/счета — остатки по счетам\n"
     "/день — траты за сегодня\n"
     "/разобрать — присвоить категории операциям из выписок\n"
+    "долг 45000 — записать текущую задолженность по карте\n"
     "/отмена — удалить последнюю операцию\n"
     "/дашборд — ссылка на дашборд"
 )
@@ -92,6 +93,8 @@ def handle_text(chat_id, text):
         return undo_last(chat_id)
     if low.startswith(("разобрать", "разбор")):
         return review_next(chat_id)
+    if low.startswith("долг"):
+        return set_card_debt(chat_id, text)
 
     op = parsing.parse(text)
     if not op or not op.get("amount"):
@@ -153,6 +156,32 @@ def handle_callback(cb):
         if k:
             op["type"] = k["kind"]
         return save_and_confirm(chat_id, op)
+
+def set_card_debt(chat_id, text):
+    """«долг 45000» или «долг Озон 45000» — записывает задолженность по карте."""
+    import datetime as _dt
+    nums = [w.replace(" ", "") for w in re.findall(r"[\d][\d \u00a0]*(?:[.,]\d+)?", text)]
+    if not nums:
+        return send(chat_id, "Напиши сумму: «долг 45000» или «долг Озон 45000».")
+    amount = abs(float(nums[-1].replace(",", ".")))
+    name_part = re.sub(r"^долг", "", text, flags=re.I)
+    name_part = re.sub(r"[\d][\d \u00a0]*(?:[.,]\d+)?", "", name_part).strip()
+    with db.conn() as c:
+        cards = c.execute("SELECT id,name FROM accounts WHERE kind='card' AND active=1").fetchall()
+    if name_part:
+        cards = [c_ for c_ in cards if name_part.lower() in c_["name"].lower()] or cards
+    if not cards:
+        return send(chat_id, "Карт пока нет. Пришли выписку по карте, и счёт появится сам.")
+    if len(cards) > 1:
+        names = "\n".join("· " + c_["name"] for c_ in cards)
+        return send(chat_id, f"Уточни карту, например «долг Озон {amount:.0f}»:\n{names}")
+    card = cards[0]
+    with db.conn() as c:
+        c.execute("INSERT OR REPLACE INTO balances(account_id,date,balance) VALUES(?,?,?)",
+                  (card["id"], _dt.date.today().isoformat(), -amount))
+    np_ = reports.net_position()
+    return send(chat_id, f"{card['name']}: задолженность {money(amount)}\n"
+                         f"Чистая позиция: {money(np_['net'])}")
 
 def review_next(chat_id):
     """Показывает операцию без категории и кнопки для выбора."""
