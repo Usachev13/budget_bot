@@ -1,0 +1,9 @@
+budget.db
+budget.db-wal
+budget.db-shm
+__pycache__/
+*.pyc
+.env
+.idea/
+.DS_Store
+*.zip

@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Бюджет</title>
+<style>
+:root{
+  color-scheme: light;
+  --bg:#f4f4f2; --surface:#fcfcfb; --border:#e4e3df;
+  --text-primary:#0b0b0b; --text-secondary:#52514e; --text-muted:#8a8984;
+  --grid:#ecebe7; --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a;
+  --good:#0ca30c; --critical:#d03b3b; --track:#ecebe7;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme: dark;
+    --bg:#111110; --surface:#1a1a19; --border:#2c2c2a;
+    --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8d8c85;
+    --grid:#2a2a28; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --track:#2c2c2a;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#111110; --surface:#1a1a19; --border:#2c2c2a;
+  --text-primary:#ffffff; --text-secondary:#c3c2b7; --text-muted:#8d8c85;
+  --grid:#2a2a28; --s1:#3987e5; --s2:#d95926; --s3:#199e70; --track:#2c2c2a;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text-primary);
+  font:14px/1.45 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1200px;margin:0 auto;padding:20px 16px 40px}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:baseline;justify-content:space-between;margin-bottom:16px}
+h1{font-size:20px;margin:0;font-weight:650}
+.sub{color:var(--text-muted);font-size:12px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(12,1fr)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px 16px;min-width:0}
+.card h2{font-size:13px;font-weight:600;margin:0 0 10px;color:var(--text-secondary)}
+.kpi{grid-column:span 3}
+.kpi .v{font-size:24px;font-weight:650;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.kpi .d{font-size:12px;color:var(--text-muted);margin-top:2px}
+.pos{color:var(--good)} .neg{color:var(--critical)}
+.c8{grid-column:span 8} .c4{grid-column:span 4} .c6{grid-column:span 6}
+@media (max-width:900px){.kpi{grid-column:span 6}.c8,.c4,.c6{grid-column:span 12}}
+@media (max-width:520px){.kpi{grid-column:span 12}}
+.legend{display:flex;gap:14px;font-size:12px;color:var(--text-secondary);margin-bottom:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:6px;vertical-align:-1px}
+svg{display:block;width:100%;height:auto;overflow:visible}
+svg text{fill:var(--text-muted);font-size:11px}
+.row{display:grid;grid-template-columns:minmax(90px,140px) 1fr 150px;gap:10px;align-items:center;padding:5px 0;font-size:13px}
+.row .n{color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.row .a{text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+.bar{height:10px;background:var(--track);border-radius:4px;position:relative}
+.bar b{position:absolute;left:0;top:0;bottom:0;border-radius:4px;background:var(--s1)}
+.bar b.over{background:var(--critical)}
+.bar .plan{position:absolute;top:-3px;bottom:-3px;width:2px;background:var(--text-primary)}
+.tag{font-size:11px;padding:1px 6px;border-radius:10px;border:1px solid var(--critical);color:var(--critical);white-space:nowrap}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;font-weight:500;color:var(--text-muted);padding:6px 4px;border-bottom:1px solid var(--border)}
+td{padding:7px 4px;border-bottom:1px solid var(--grid)}
+td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.src{color:var(--text-muted);font-size:12px}
+.line{display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--grid);font-size:13px}
+.line span:first-child{color:var(--text-secondary)}
+.line span:last-child{font-variant-numeric:tabular-nums;text-align:right}
+.meter{height:10px;background:var(--track);border-radius:4px;overflow:hidden;margin:8px 0 4px}
+.meter b{display:block;height:100%;background:var(--s3);border-radius:4px}
+.warn{margin-top:14px;font-size:12px;color:var(--text-muted)}
+#tip{position:fixed;pointer-events:none;background:var(--surface);border:1px solid var(--border);border-radius:8px;
+  padding:6px 9px;font-size:12px;box-shadow:0 4px 14px rgba(0,0,0,.12);display:none;z-index:9;white-space:nowrap}
+#tip .t{color:var(--text-muted);margin-bottom:2px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Личный бюджет</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <div class="sub" id="unsorted"></div>
+  </header>
+
+  <div class="grid">
+    <div class="card kpi"><h2>Чистая позиция</h2><div class="v" id="k-net"></div><div class="d" id="k-net-d"></div></div>
+    <div class="card kpi"><h2>Из зарплаты потрачено</h2><div class="v" id="k-sal"></div><div class="d" id="k-sal-d"></div></div>
+    <div class="card kpi"><h2>Доходы за месяц</h2><div class="v" id="k-inc"></div><div class="d" id="k-inc-d"></div></div>
+    <div class="card kpi"><h2>Переезд</h2><div class="v" id="k-rel"></div><div class="d" id="k-rel-d"></div></div>
+
+    <div class="card c8">
+      <h2>Доходы и расходы по месяцам</h2>
+      <div class="legend"><span><i style="background:var(--s1)"></i>Доходы</span><span><i style="background:var(--s2)"></i>Расходы</span></div>
+      <div id="trend"></div>
+    </div>
+
+    <div class="card c4">
+      <h2>Деньги ИП: как распределить</h2>
+      <div id="split"></div>
+      <h2 style="margin-top:14px">Счета</h2>
+      <div id="accounts"></div>
+    </div>
+
+    <div class="card c6">
+      <h2>Лимиты месяца · зарплата</h2>
+      <div id="cats"></div>
+      <div class="src" style="margin-top:6px">Вертикальная черта — лимит на месяц</div>
+    </div>
+
+    <div class="card c6">
+      <h2>Последние операции</h2>
+      <table><thead><tr><th>Дата</th><th>Описание</th><th>Категория</th><th style="text-align:right">Сумма</th></tr></thead>
+      <tbody id="recent"></tbody></table>
+    </div>
+  </div>
+  <div class="warn" id="warn"></div>
+</div>
+<div id="tip"></div>
+
+<script id="payload" type="application/json">{{ data | tojson }}</script>
+<script>
+const D = JSON.parse(document.getElementById("payload").textContent);
+const SYM = {RUB:"₽", ILS:"₪", USD:"$", USDT:"USDT"};
+const fmt = (v, c="RUB") => {
+  const a = Math.abs(v), s = v < 0 ? "−" : "";
+  const n = a >= 1e6 ? (a/1e6).toLocaleString("ru-RU",{maximumFractionDigits:2})+" млн"
+                     : Math.round(a).toLocaleString("ru-RU");
+  return s + n + " " + (SYM[c] || c);
+};
+const tip = document.getElementById("tip");
+const showTip = (e, html) => { tip.innerHTML = html; tip.style.display = "block";
+  tip.style.left = Math.min(e.clientX+14, innerWidth-tip.offsetWidth-8)+"px"; tip.style.top = (e.clientY+14)+"px"; };
+const hideTip = () => tip.style.display = "none";
+
+document.getElementById("sub").textContent =
+  "Месяц " + D.month + " · курс ₪ " + D.rates.ILS + " ₽, $ " + D.rates.USD + " ₽";
+document.getElementById("unsorted").textContent =
+  D.unsorted ? "Без категории: " + D.unsorted + " — разбери командой /разобрать" : "Всё разобрано";
+
+// ------- показатели
+const net = D.net;
+const kn = document.getElementById("k-net");
+kn.textContent = fmt(net.net);
+kn.className = "v " + (net.net >= 0 ? "pos" : "neg");
+document.getElementById("k-net-d").textContent =
+  "свои " + fmt(net.own) + " · долг по картам " + fmt(net.debt);
+
+document.getElementById("k-sal").textContent = fmt(D.salary_fact);
+const leftSal = D.salary_limit - D.salary_fact;
+document.getElementById("k-sal-d").innerHTML = "из " + fmt(D.salary_limit) +
+  ' · <span class="' + (leftSal >= 0 ? "pos" : "neg") + '">' +
+  (leftSal >= 0 ? "осталось " : "перерасход ") + fmt(Math.abs(leftSal)) + "</span>";
+
+document.getElementById("k-inc").textContent = fmt(D.total_income);
+document.getElementById("k-inc-d").textContent = "из них ИП и проценты " + fmt(D.ip_income);
+
+const rel = D.relocation;
+document.getElementById("k-rel").textContent = fmt(rel.have, "ILS");
+document.getElementById("k-rel-d").textContent =
+  "цель " + fmt(rel.goal, "ILS") + " · нужно " + fmt(rel.per_month, "ILS") + "/мес (" + rel.months_left + " мес.)";
+
+// ------- график по месяцам
+(function trend(){
+  const data = D.trend, n = data.length;
+  if (!n) return;
+  const W = 720, H = 240, m = {l:54, r:12, t:10, b:26};
+  const inc = data.map(d => d.income), exp = data.map(d => d.expense);
+  const max = Math.max(1, ...inc, ...exp) * 1.1;
+  const iw = W-m.l-m.r, ih = H-m.t-m.b;
+  const x = i => m.l + iw*(n === 1 ? .5 : i/(n-1)), y = v => m.t + ih*(1 - v/max);
+  let g = "";
+  for (let k = 0; k <= 4; k++){
+    const v = max*k/4, yy = y(v);
+    g += `<line x1="${m.l}" x2="${W-m.r}" y1="${yy}" y2="${yy}" stroke="var(--grid)"/>
+          <text x="${m.l-8}" y="${yy+4}" text-anchor="end">${v >= 1000 ? Math.round(v/1000)+"k" : Math.round(v)}</text>`;
+  }
+  data.forEach((d,i) => {
+    const label = d.month.slice(5) + "." + d.month.slice(2,4);
+    g += `<text x="${x(i)}" y="${H-6}" text-anchor="middle">${label}</text>`;
+  });
+  const path = a => a.map((v,i) => (i ? "L" : "M") + x(i).toFixed(1) + " " + y(v).toFixed(1)).join(" ");
+  g += `<path d="${path(inc)}" fill="none" stroke="var(--s1)" stroke-width="2" stroke-linejoin="round"/>`;
+  g += `<path d="${path(exp)}" fill="none" stroke="var(--s2)" stroke-width="2" stroke-linejoin="round"/>`;
+  g += `<line id="xh" y1="${m.t}" y2="${m.t+ih}" stroke="var(--text-muted)" stroke-dasharray="3 3" visibility="hidden"/>
+        <circle id="d1" r="4.5" fill="var(--s1)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+        <circle id="d2" r="4.5" fill="var(--s2)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
+        <rect id="hit" x="${m.l}" y="${m.t}" width="${iw}" height="${ih}" fill="transparent"/>`;
+  const host = document.getElementById("trend");
+  host.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Доходы и расходы по месяцам">${g}</svg>`;
+  const svg = host.querySelector("svg"), hit = svg.querySelector("#hit");
+  hit.addEventListener("mousemove", e => {
+    const pt = svg.createSVGPoint(); pt.x = e.clientX; pt.y = e.clientY;
+    const p = pt.matrixTransform(svg.getScreenCTM().inverse());
+    const i = Math.max(0, Math.min(n-1, Math.round((p.x-m.l)/iw*(n-1))));
+    [["d1",inc],["d2",exp]].forEach(([id,a]) => {
+      const c = svg.querySelector("#"+id);
+      c.setAttribute("cx", x(i)); c.setAttribute("cy", y(a[i])); c.setAttribute("visibility","visible");
+    });
+    const xh = svg.querySelector("#xh");
+    xh.setAttribute("x1", x(i)); xh.setAttribute("x2", x(i)); xh.setAttribute("visibility","visible");
+    showTip(e, `<div class="t">${data[i].month}</div>Доходы: <b>${fmt(inc[i])}</b><br>Расходы: <b>${fmt(exp[i])}</b><br>Разница: <b>${fmt(inc[i]-exp[i])}</b>`);
+  });
+  hit.addEventListener("mouseleave", () => { hideTip();
+    svg.querySelectorAll("#d1,#d2,#xh").forEach(el => el.setAttribute("visibility","hidden")); });
+})();
+
+// ------- лимиты
+(function cats(){
+  const items = D.salary.filter(i => i.limit || i.fact);
+  const max = Math.max(1, ...items.map(i => Math.max(i.fact, i.limit)));
+  const host = document.getElementById("cats");
+  host.innerHTML = items.map((i,idx) => {
+    const over = i.limit > 0 && i.fact > i.limit;
+    return `<div class="row" data-i="${idx}"><div class="n">${i.name}</div>
+      <div class="bar"><b class="${over ? "over" : ""}" style="width:${Math.min(100, i.fact/max*100)}%"></b>
+      ${i.limit ? `<span class="plan" style="left:${i.limit/max*100}%"></span>` : ""}</div>
+      <div class="a">${fmt(i.fact)}${over ? ` <span class="tag">▲ ${Math.round((i.fact/i.limit-1)*100)}%</span>` : ""}</div></div>`;
+  }).join("");
+  host.querySelectorAll(".row").forEach(r => {
+    const i = items[r.dataset.i];
+    r.addEventListener("mousemove", e => showTip(e,
+      `<div class="t">${i.name}</div>Факт: <b>${fmt(i.fact)}</b><br>Лимит: <b>${fmt(i.limit)}</b><br>` +
+      (i.fact > i.limit ? "Превышение: " : "Осталось: ") + `<b>${fmt(Math.abs(i.limit-i.fact))}</b>`));
+    r.addEventListener("mouseleave", hideTip);
+  });
+})();
+
+// ------- распределение ИП и счета
+document.getElementById("split").innerHTML =
+  Object.entries(D.split).map(([k,v]) => `<div class="line"><span>${k}</span><span>${fmt(v)}</span></div>`).join("")
+  + `<div class="src" style="margin-top:6px">от ${fmt(D.ip_income)} дохода ИП и процентов за месяц</div>`;
+
+document.getElementById("accounts").innerHTML = D.accounts.map(a => {
+  const debt = a.kind === "card" && a.balance < 0;
+  return `<div class="line"><span>${a.name}${a.kind === "card" ? " · карта" : ""}</span>
+    <span class="${debt ? "neg" : ""}">${fmt(a.balance, a.currency)}</span></div>`;
+}).join("") || '<div class="src">Счета появятся после загрузки выписок</div>';
+
+// ------- операции
+document.getElementById("recent").innerHTML = D.recent.map(t => {
+  const sign = t.type === "income" ? "+" : t.type === "transfer" ? "→ " : "−";
+  return `<tr><td class="src">${t.date.slice(8,10)}.${t.date.slice(5,7)}</td>
+    <td>${(t.note || "").slice(0,40)}</td><td class="src">${t.category || "—"}</td>
+    <td class="num ${t.type === "income" ? "pos" : ""}">${sign}${fmt(t.amount, t.currency)}</td></tr>`;
+}).join("");
+
+document.getElementById("warn").textContent =
+  "Данные обновляются сразу после записи в боте. Переводы между своими счетами и погашения карт в расходы не входят.";
+</script>
+</body>
+</html>
