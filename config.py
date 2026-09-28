@@ -16,6 +16,9 @@ GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo")
 GROQ_LLM_MODEL = os.environ.get("GROQ_LLM_MODEL", "llama-3.3-70b-versatile")
 
+# Google Таблица со справочником категорий, правил и счетов
+SHEET_ID = os.environ.get("SHEET_ID", "")
+
 BASE_CURRENCY = "RUB"
 SALARY_BUDGET = 175000          # месячный лимит расходов из зарплаты, ₽
 IP_SPLIT = {                     # распределение денег ИП и процентов

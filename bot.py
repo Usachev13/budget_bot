@@ -44,6 +44,7 @@ HELP = (
     "/счета — остатки по счетам\n"
     "/день — траты за сегодня\n"
     "/разобрать — присвоить категории операциям из выписок\n"
+    "/синхрон — подтянуть категории и правила из Google Таблицы\n"
     "долг 45000 — записать текущую задолженность по карте\n"
     "поправь 1895 жильё — сменить категорию операции на эту сумму\n"
     "/отмена — удалить последнюю операцию\n"
@@ -92,6 +93,8 @@ def handle_text(chat_id, text):
         return send(chat_id, "Дашборд: /dashboard?key=… (адрес и ключ в настройках)")
     if low.startswith(("отмена", "undo")):
         return undo_last(chat_id)
+    if low.startswith(("синхрон", "sync", "таблица")):
+        return sync_sheet(chat_id)
     if low.startswith(("разобрать", "разбор")):
         return review_next(chat_id)
     if low.startswith("долг"):
@@ -160,6 +163,18 @@ def handle_callback(cb):
         if k:
             op["type"] = k["kind"]
         return save_and_confirm(chat_id, op)
+
+def sync_sheet(chat_id):
+    """Забирает справочники из Google Таблицы."""
+    import sheet_sync
+    try:
+        res = sheet_sync.sync_all()
+    except Exception as e:
+        return send(chat_id, f"Не смог прочитать таблицу: {e}")
+    return send(chat_id,
+                f"Из таблицы загружено:\n· категорий — {res['categories']}\n"
+                f"· правил — {res['rules']}\n· счетов — {res['accounts']}\n"
+                f"Сумма лимитов из зарплаты: {money(res['salary_limit'])}")
 
 def fix_category(chat_id, text):
     """«поправь 1895 жильё» — меняет категорию у операции с такой суммой."""
