@@ -41,14 +41,24 @@ def balances():
     return out
 
 def net_position():
-    """Свои деньги минус задолженность по картам, ₽."""
-    own = debt = 0.0
+    """Свои деньги минус долг по картам.
+
+    Отдельно считаем позицию без копилки переезда: эти деньги отложены
+    на отъезд и на погашение карт не идут.
+    """
+    own = debt = relocation_rub = 0.0
     for a in balances():
         if a["kind"] == "card":
             debt += max(0.0, -a["rub"])
-        else:
-            own += a["rub"]
-    return {"own": own, "debt": debt, "net": own - debt}
+            continue
+        own += a["rub"]
+        if (a["purpose"] or "").lower().startswith("переезд"):
+            relocation_rub += a["rub"]
+    return {"own": own, "debt": debt, "net": own - debt,
+            "relocation": relocation_rub,
+            "own_wo_relocation": own - relocation_rub,
+            "net_wo_relocation": own - relocation_rub - debt}
+
 
 # --------------------------------------------------------------- по месяцам
 def month_data(month=None):
@@ -200,6 +210,9 @@ def month_summary_text():
               f"Потрачено из ИП: {_m(md['ip_spent'])}",
               f"Свои деньги: {_m(np_['own'])} · долг по картам: {_m(np_['debt'])}",
               f"Чистая позиция: {_m(np_['net'])}"]
+    if np_.get("relocation"):
+        lines.append(f"Без копилки переезда: {_m(np_['net_wo_relocation'])} "
+                     f"(отложено {_m(np_['relocation'])})")
     r = relocation()
     if r["goal"]:
         lines.append(f"Переезд: {r['have']:,.0f} из {r['goal']:,.0f} ₪, "

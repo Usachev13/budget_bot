@@ -141,8 +141,12 @@ const net = D.net;
 const kn = document.getElementById("k-net");
 kn.textContent = fmt(net.net);
 kn.className = "v " + (net.net >= 0 ? "pos" : "neg");
-document.getElementById("k-net-d").textContent =
-  "свои " + fmt(net.own) + " · долг по картам " + fmt(net.debt);
+document.getElementById("k-net-d").innerHTML =
+  "свои " + fmt(net.own) + " · долг по картам " + fmt(net.debt) +
+  (net.relocation
+    ? '<br>без копилки переезда: <span class="' + (net.net_wo_relocation >= 0 ? "pos" : "neg") + '">' +
+      fmt(net.net_wo_relocation) + "</span> (отложено " + fmt(net.relocation) + ")"
+    : "");
 
 document.getElementById("k-sal").textContent = fmt(D.salary_fact);
 const leftSal = D.salary_limit - D.salary_fact;
