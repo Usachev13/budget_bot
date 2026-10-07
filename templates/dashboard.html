@@ -155,8 +155,11 @@ document.getElementById("k-inc-d").textContent = "из них ИП и проце
 
 const rel = D.relocation;
 document.getElementById("k-rel").textContent = fmt(rel.have, "ILS");
-document.getElementById("k-rel-d").textContent =
-  "цель " + fmt(rel.goal, "ILS") + " · нужно " + fmt(rel.per_month, "ILS") + "/мес (" + rel.months_left + " мес.)";
+document.getElementById("k-rel-d").innerHTML =
+  "цель " + fmt(rel.goal, "ILS") + " · нужно " + fmt(rel.per_month, "ILS") + "/мес (" + rel.months_left + " мес.)" +
+  ((rel.parts && rel.parts.length)
+    ? '<br><span class="src">' + rel.parts.map(p => fmt(p.amount, p.currency)).join(" · ") + "</span>"
+    : "");
 
 // ------- график по месяцам
 (function trend(){

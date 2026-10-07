@@ -103,18 +103,26 @@ def ip_split_plan(amount):
     return {k: amount * v for k, v in shares.items()}
 
 def relocation():
-    """Прогресс по переезду: сколько шекелей накоплено и сколько нужно в месяц."""
-    ils = sum(a["balance"] for a in balances() if a["currency"] == "ILS")
+    """Прогресс по переезду: всё, что лежит на счетах с назначением «переезд», в шекелях."""
+    ils_rate = db.rate("ILS") or 1
+    have = 0.0
+    parts = []
+    for a in balances():
+        if (a["purpose"] or "").lower().startswith("переезд"):
+            in_ils = a["rub"] / ils_rate
+            have += in_ils
+            parts.append({"name": a["name"], "amount": a["balance"],
+                          "currency": a["currency"], "ils": in_ils})
     left_days = (dt.date.fromisoformat(config.RELOCATION_DEADLINE) - dt.date.today()).days
     months_left = max(1, round(left_days / 30))
-    need = max(0.0, config.RELOCATION_GOAL_ILS - ils)
-    return {"have": ils, "goal": config.RELOCATION_GOAL_ILS, "need": need,
+    need = max(0.0, config.RELOCATION_GOAL_ILS - have)
+    return {"have": have, "goal": config.RELOCATION_GOAL_ILS, "need": need,
             "months_left": months_left, "per_month": need / months_left,
-            "per_month_rub": need / months_left * db.rate("ILS")}
+            "per_month_rub": need / months_left * ils_rate, "parts": parts}
 
 MERCHANT_STRIP = re.compile(r"[\d№#]+[\d\-/.]*")
-
 STOP_TAIL = ("заказ", "без ндс", "номер", "перевод по сбп", "покупка")
+
 
 def merchant_key(note):
     """Ключ продавца: описание без номеров заказов, хвостов и лишних знаков."""
@@ -126,23 +134,27 @@ def merchant_key(note):
     words = [w for w in s.split() if len(w) > 1]
     return " ".join(words)[:40] or "без описания"
 
+
 def unsorted_groups():
     """Неразобранные операции, сгруппированные по продавцу. Самая крупная группа первой."""
     with db.conn() as c:
         rows = c.execute("SELECT id, date, amount_rub, note, type FROM txns WHERE category=''").fetchall()
     groups = {}
     for r in rows:
-        g = groups.setdefault(merchant_key(r["note"]), {"ids": [], "sum": 0.0, "note": r["note"], "date": r["date"]})
+        g = groups.setdefault(merchant_key(r["note"]),
+                              {"ids": [], "sum": 0.0, "note": r["note"], "date": r["date"]})
         g["ids"].append(r["id"])
         g["sum"] += r["amount_rub"]
     out = [{"key": k, **v, "count": len(v["ids"])} for k, v in groups.items()]
     return sorted(out, key=lambda g: (-g["count"], -g["sum"]))
+
 
 def apply_category_to_group(txn_ids, category):
     with db.conn() as c:
         kind = c.execute("SELECT kind FROM categories WHERE name=?", (category,)).fetchone()
         c.executemany("UPDATE txns SET category=?, type=COALESCE(?,type) WHERE id=?",
                       [(category, kind["kind"] if kind else None, i) for i in txn_ids])
+
 
 def unsorted_txns(limit=10):
     """Операции без категории — их бот предлагает разобрать."""
@@ -151,9 +163,11 @@ def unsorted_txns(limit=10):
             "SELECT id,date,amount_rub,note,type FROM txns WHERE category='' ORDER BY amount_rub DESC LIMIT ?",
             (limit,))]
 
+
 def unsorted_count():
     with db.conn() as c:
         return c.execute("SELECT COUNT(*) n FROM txns WHERE category=''").fetchone()["n"]
+
 
 def categories_for(type_):
     with db.conn() as c:
