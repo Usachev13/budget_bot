@@ -15,12 +15,41 @@ def call(method, **payload):
         print("telegram error:", e)
         return None
 
-def send(chat_id, text, keyboard=None):
+MENU = [["📊 Итоги", "💳 Счета"], ["📅 День", "🗂 Разобрать"], ["↩️ Отмена", "❓ Помощь"]]
+
+COMMANDS = [
+    ("итоги", "лимиты месяца, доходы, чистая позиция"),
+    ("счета", "остатки и свободные лимиты по картам"),
+    ("день", "траты за сегодня"),
+    ("разобрать", "категории для операций из выписок"),
+    ("отмена", "удалить последнюю операцию"),
+    ("синхрон", "обновить справочники из Google Таблицы"),
+    ("дашборд", "ссылка на дашборд"),
+    ("помощь", "как пользоваться"),
+]
+
+
+def send(chat_id, text, keyboard=None, menu=False):
     payload = {"chat_id": chat_id, "text": text, "parse_mode": "HTML",
                "disable_web_page_preview": True}
     if keyboard:
         payload["reply_markup"] = {"inline_keyboard": keyboard}
+    elif menu:
+        payload["reply_markup"] = {"keyboard": MENU, "resize_keyboard": True,
+                                   "is_persistent": True}
     return call("sendMessage", **payload)
+
+
+def setup_menu():
+    """Список команд в меню телеграма плюс кнопка «Меню»."""
+    call("setMyCommands", commands=[{"command": c, "description": d} for c, d in COMMANDS])
+    return call("setChatMenuButton", menu_button={"type": "commands"})
+
+
+def drop_keyboard(chat_id, message_id):
+    """Убирает кнопки у отвеченного вопроса, чтобы по ним нельзя было нажать повторно."""
+    call("editMessageReplyMarkup", chat_id=chat_id, message_id=message_id,
+         reply_markup={"inline_keyboard": []})
 
 def get_file(file_id):
     r = requests.get(API.format(config.TELEGRAM_TOKEN, "getFile"),
@@ -48,7 +77,12 @@ HELP = (
     "долг 45000 — записать текущую задолженность по карте\n"
     "поправь 1895 жильё — сменить категорию операции на эту сумму\n"
     "/отмена — удалить последнюю операцию\n"
-    "/дашборд — ссылка на дашборд"
+    "/дашборд — ссылка на дашборд\n\n"
+    "<b>Счета</b>\n"
+    "Чтобы списать с конкретной карты, добавь её название: «кофе 350 озон».\n"
+    "«счёт по умолчанию яндекс» — откуда списывать, если карта не указана.\n"
+    "«добавь карту Сбер 100000» — новая кредитка с лимитом.\n"
+    "«добавь счёт Альфа» — обычный счёт."
 )
 
 def handle_update(update):
@@ -79,10 +113,18 @@ def handle_update(update):
         return
     return handle_text(chat_id, text)
 
+BUTTON_WORDS = {"📊 итоги": "итоги", "💳 счета": "счета", "📅 день": "день",
+                "🗂 разобрать": "разобрать", "↩️ отмена": "отмена", "❓ помощь": "помощь"}
+
+
 def handle_text(chat_id, text):
-    low = text.lower().lstrip("/")
-    if low in ("start", "help", "помощь"):
-        return send(chat_id, HELP)
+    low = text.lower().lstrip("/").strip()
+    low = BUTTON_WORDS.get(low, low)
+    if low in ("start", "меню", "menu"):
+        setup_menu()
+        return send(chat_id, HELP, menu=True)
+    if low in ("help", "помощь"):
+        return send(chat_id, HELP, menu=True)
     if low.startswith(("итоги", "month", "отчет", "отчёт")):
         return send(chat_id, reports.month_summary_text())
     if low.startswith(("счета", "баланс")):
@@ -101,29 +143,88 @@ def handle_text(chat_id, text):
         return set_card_debt(chat_id, text)
     if low.startswith(("поправь", "исправь")):
         return fix_category(chat_id, text)
+    if low.startswith(("добавь карту", "добавь счёт", "добавь счет")):
+        return add_account(chat_id, text)
+    if low.startswith(("счёт по умолчанию", "счет по умолчанию", "по умолчанию")):
+        return set_default_account(chat_id, text)
 
     op = parsing.parse(text)
     if not op or not op.get("amount"):
         return send(chat_id, "Не понял сумму. Например: «кофе 350» или «+50000 комиссия».")
+    op["account_id"] = db.find_account(text) or default_account_id()
     if not op.get("category"):
         with db.conn() as c:
-            c.execute("INSERT OR REPLACE INTO pending(chat_id,payload) VALUES(?,?)",
-                      (chat_id, json.dumps(op, ensure_ascii=False)))
+            cur = c.execute("INSERT INTO pending(chat_id,payload) VALUES(?,?)",
+                            (chat_id, json.dumps(op, ensure_ascii=False)))
+            pid = cur.lastrowid
         cats = reports.categories_for(op["type"])
-        kb = [[{"text": c_, "callback_data": f"cat|{c_}"}] for c_ in cats[:12]]
+        kb = [[{"text": c_, "callback_data": f"cat|{pid}|{c_}"}] for c_ in cats[:12]]
         return send(chat_id, f"{money(op['amount'], op['currency'])} — какая категория?", kb)
     return save_and_confirm(chat_id, op)
 
+
+def default_account_id():
+    name = db.get_setting("default_account")
+    return db.account_by_name(name) if name else None
+
+
+def account_name(account_id):
+    if not account_id:
+        return ""
+    with db.conn() as c:
+        r = c.execute("SELECT name FROM accounts WHERE id=?", (account_id,)).fetchone()
+    return r["name"] if r else ""
+
+
+def add_account(chat_id, text):
+    """«добавь карту Сбер 100000» или «добавь счёт Альфа»."""
+    is_card = "карт" in text.lower()
+    rest = re.sub(r"^добавь\s+(карту|счёт|счет)\s*", "", text.strip(), flags=re.I)
+    m = re.search(r"([\d][\d \u00a0]*)\s*$", rest)
+    limit = float(m.group(1).replace(" ", "").replace("\u00a0", "")) if m else 0.0
+    name = rest[:m.start()].strip() if m else rest.strip()
+    if not name:
+        return send(chat_id, "Напиши название: «добавь карту Сбер 100000».")
+    aid = db.account_by_name(name, create_kind="card" if is_card else "current")
+    with db.conn() as c:
+        c.execute("UPDATE accounts SET kind=?, credit_limit=? WHERE id=?",
+                  ("card" if is_card else "current", limit, aid))
+    tail = f", лимит {money(limit)}" if is_card and limit else ""
+    return send(chat_id, f"Добавил {'карту' if is_card else 'счёт'} «{name}»{tail}.\n"
+                         f"Теперь можно писать «кофе 350 {name.split()[0].lower()}».")
+
+
+def set_default_account(chat_id, text):
+    query = re.sub(r"^(счёт|счет)?\s*по умолчанию\s*", "", text.strip(), flags=re.I).strip()
+    aid = db.find_account(query) if query else None
+    if not aid:
+        with db.conn() as c:
+            names = [r["name"] for r in c.execute("SELECT name FROM accounts WHERE active=1")]
+        return send(chat_id, "Не нашёл такой счёт. Есть:\n" + "\n".join("· " + n for n in names))
+    db.set_setting("default_account", account_name(aid))
+    return send(chat_id, f"Списываю по умолчанию с «{account_name(aid)}».")
+
+
 def save_and_confirm(chat_id, op):
+    account_id = op.get("account_id") or default_account_id()
     tid = db.add_txn(op.get("date") or dt.date.today().isoformat(), op["type"], op["amount"],
-                     op.get("currency", "RUB"), op["category"], note=op.get("note", ""))
+                     op.get("currency", "RUB"), op["category"], account_id=account_id,
+                     note=op.get("note", ""))
     if op.get("note"):
         db.learn_rule(op["note"].split()[0], op["category"])
     sign = {"expense": "−", "income": "+", "transfer": "→"}[op["type"]]
+    parts = [f"{sign} {money(op['amount'], op.get('currency', 'RUB'))} · {op['category']}"]
+    if account_id:
+        parts[0] += f" · {account_name(account_id)}"
     left = reports.category_left(op["category"])
-    tail = f"\nОсталось в лимите: {money(left)}" if left is not None else ""
-    return send(chat_id, f"{sign} {money(op['amount'], op.get('currency','RUB'))} · "
-                         f"{op['category']}{tail}\n<code>#{tid}</code>")
+    if left is not None:
+        parts.append(f"Осталось в лимите: {money(left)}")
+    free = reports.card_available(account_id) if account_id else None
+    if free is not None:
+        parts.append(f"Свободно по карте: {money(free)}")
+    parts.append(f"<code>#{tid}</code>")
+    return send(chat_id, "\n".join(parts))
+
 
 def handle_callback(cb):
     chat_id = cb["message"]["chat"]["id"]
@@ -150,12 +251,13 @@ def handle_callback(cb):
         reports.apply_category_to_group(group["ids"] if group else [int(tid)], "Непредвиденное")
         return review_next(chat_id)
     if data.startswith("cat|"):
-        category = data.split("|", 1)[1]
+        _, pid, category = data.split("|", 2)
         with db.conn() as c:
-            row = c.execute("SELECT payload FROM pending WHERE chat_id=?", (chat_id,)).fetchone()
-            c.execute("DELETE FROM pending WHERE chat_id=?", (chat_id,))
+            row = c.execute("SELECT payload FROM pending WHERE id=?", (pid,)).fetchone()
+            c.execute("DELETE FROM pending WHERE id=?", (pid,))
+        drop_keyboard(chat_id, cb["message"]["message_id"])
         if not row:
-            return send(chat_id, "Операция уже не актуальна.")
+            return send(chat_id, "Эта операция уже записана или отменена.")
         op = json.loads(row["payload"])
         op["category"] = category
         with db.conn() as c:
@@ -241,12 +343,17 @@ def review_next(chat_id):
     return send(chat_id, f"{head}\nВсего без категории: {left}\nКакая категория?", kb)
 
 def undo_last(chat_id):
+    """Удаляет последнюю запись и снимает незавершённые вопросы о категории."""
     with db.conn() as c:
-        row = c.execute("SELECT id,amount,currency,category FROM txns WHERE source='bot' ORDER BY id DESC LIMIT 1").fetchone()
+        pend = c.execute("SELECT COUNT(*) n FROM pending WHERE chat_id=?", (chat_id,)).fetchone()["n"]
+        c.execute("DELETE FROM pending WHERE chat_id=?", (chat_id,))
+        row = c.execute("""SELECT id,amount,currency,category FROM txns
+                           WHERE source='bot' ORDER BY id DESC LIMIT 1""").fetchone()
         if not row:
-            return send(chat_id, "Нечего отменять.")
+            return send(chat_id, "Нечего отменять." + (f" Снял {pend} незаданный вопрос." if pend else ""))
         c.execute("DELETE FROM txns WHERE id=?", (row["id"],))
-    return send(chat_id, f"Удалил: {money(row['amount'], row['currency'])} · {row['category']}")
+    tail = "\nНезавершённые вопросы о категории тоже снял." if pend else ""
+    return send(chat_id, f"Удалил: {money(row['amount'], row['currency'])} · {row['category']}{tail}")
 
 def handle_document(chat_id, doc):
     import statements

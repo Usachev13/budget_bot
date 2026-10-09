@@ -179,6 +179,16 @@ def unsorted_count():
         return c.execute("SELECT COUNT(*) n FROM txns WHERE category=''").fetchone()["n"]
 
 
+def card_available(account_id):
+    """Свободный лимит по кредитке: лимит минус текущая задолженность."""
+    with db.conn() as c:
+        a = c.execute("SELECT kind, credit_limit FROM accounts WHERE id=?", (account_id,)).fetchone()
+    if not a or a["kind"] != "card" or not a["credit_limit"]:
+        return None
+    bal = next((x["balance"] for x in balances() if x["id"] == account_id), 0.0)
+    return a["credit_limit"] + min(0.0, bal)
+
+
 def categories_for(type_):
     with db.conn() as c:
         return [r["name"] for r in c.execute(
@@ -221,14 +231,29 @@ def month_summary_text():
 
 def accounts_text():
     lines = ["<b>Счета</b>"]
+    sym = {"RUB": "₽", "ILS": "₪", "USD": "$", "USDT": "USDT", "EUR": "€", "CNY": "¥"}
+    cards = []
     for a in balances():
-        sym = {"RUB": "₽", "ILS": "₪", "USD": "$", "USDT": "USDT"}.get(a["currency"], a["currency"])
+        s = sym.get(a["currency"], a["currency"])
         v = f"{a['balance']:,.0f}".replace(",", " ")
-        tag = " (карта)" if a["kind"] == "card" else ""
-        lines.append(f"· {a['name']}{tag}: {v} {sym}")
+        if a["kind"] == "card":
+            cards.append(a)
+            continue
+        purpose = f" · {a['purpose']}" if a["purpose"] else ""
+        lines.append(f"· {a['name']}: {v} {s}{purpose}")
+    if cards:
+        lines.append("\n<b>Карты</b>")
+        for a in cards:
+            debt = max(0.0, -a["balance"])
+            free = card_available(a["id"])
+            tail = f" · свободно {_m(free)}" if free is not None else ""
+            lines.append(f"· {a['name']}: долг {_m(debt)}{tail}")
     np_ = net_position()
     lines.append(f"\nЧистая позиция: {_m(np_['net'])}")
+    if np_.get("relocation"):
+        lines.append(f"Без копилки переезда: {_m(np_['net_wo_relocation'])}")
     return "\n".join(lines)
+
 
 def today_text():
     today = dt.date.today().isoformat()

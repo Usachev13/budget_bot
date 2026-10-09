@@ -1,5 +1,5 @@
 """Работа с базой. SQLite, одна таблица операций плюс справочники."""
-import sqlite3, os, datetime as dt
+import sqlite3, os, re, datetime as dt
 from contextlib import contextmanager
 import config
 
@@ -95,10 +95,39 @@ def conn():
     finally:
         c.close()
 
+MIGRATIONS = [
+    ("accounts", "aliases", "ALTER TABLE accounts ADD COLUMN aliases TEXT DEFAULT ''"),
+]
+
+
 def init():
     with conn() as c:
         c.executescript(SCHEMA)
+        for table, column, sql in MIGRATIONS:
+            cols = {r["name"] for r in c.execute(f"PRAGMA table_info({table})")}
+            if column not in cols:
+                c.execute(sql)
+        # раньше в pending была одна строка на чат, из-за этого старые кнопки
+        # записывали категорию в новую операцию; теперь у каждого вопроса свой id
+        cols = {r["name"] for r in c.execute("PRAGMA table_info(pending)")}
+        if "id" not in cols:
+            c.execute("DROP TABLE IF EXISTS pending")
+            c.execute("""CREATE TABLE pending (
+                id INTEGER PRIMARY KEY, chat_id INTEGER, payload TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP)""")
     seed()
+
+
+def get_setting(key, default=None):
+    with conn() as c:
+        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+    return r["value"] if r else default
+
+
+def set_setting(key, value):
+    with conn() as c:
+        c.execute("""INSERT INTO settings(key,value) VALUES(?,?)
+                     ON CONFLICT(key) DO UPDATE SET value=excluded.value""", (key, str(value)))
 
 # ---------------------------------------------------------------- справочники
 CATEGORIES = [
@@ -227,6 +256,31 @@ def account_by_name(name, create_kind=None, currency="RUB"):
                             (name, create_kind, currency))
             return cur.lastrowid
     return None
+
+def find_account(text):
+    """Ищет счёт по названию или сокращению, упомянутому в тексте.
+
+    «кофе 350 озон» найдёт карту «Озон», «по умолчанию яндекс» — «Яндекс дебетовая».
+    """
+    t = (text or "").lower()
+    words = [w for w in re.findall(r"[a-zа-яё0-9]+", t) if len(w) >= 3]
+    best = None
+    with conn() as c:
+        rows = c.execute("SELECT id,name,aliases FROM accounts WHERE active=1").fetchall()
+    for r in rows:
+        keys = [r["name"].lower()] + [a.strip().lower() for a in (r["aliases"] or "").split(",") if a.strip()]
+        for k in keys:
+            score = 0
+            if len(k) >= 3 and k in t:                     # «озон» внутри сообщения
+                score = len(k) + 1
+            else:
+                first = k.split()[0] if k.split() else ""   # «яндекс» -> «Яндекс дебетовая»
+                if len(first) >= 3 and first in words:
+                    score = len(first)
+            if score and (best is None or score > best[1]):
+                best = (r["id"], score)
+    return best[0] if best else None
+
 
 def month_limits(month):
     """Лимиты категорий с учётом переопределений на месяц."""
