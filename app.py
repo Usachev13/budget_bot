@@ -31,6 +31,13 @@ def set_webhook():
                                                      drop_pending_updates=True)})
 
 
+@app.get("/api/month")
+def api_month():
+    """Данные месяца для Google Таблицы: суммы по дням и категориям."""
+    check_key()
+    return jsonify(reports.month_matrix(request.args.get("month")))
+
+
 @app.get("/api/data")
 def api_data():
     check_key()

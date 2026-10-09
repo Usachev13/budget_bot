@@ -296,14 +296,31 @@ def month_limits(month):
 LETTERS = re.compile(r"[a-zA-Zа-яёА-ЯЁ]")
 
 
+def account_words():
+    """Названия и сокращения счетов — они не могут быть правилом категории."""
+    words = set()
+    with conn() as c:
+        for r in c.execute("SELECT name, aliases FROM accounts"):
+            for part in [r["name"]] + (r["aliases"] or "").split(","):
+                part = part.strip().lower()
+                if part:
+                    words.add(part)
+                    for w in part.split():
+                        if len(w) >= 3:
+                            words.add(w)
+    return words
+
+
 def learn_rule(pattern, category):
     """Запоминает правило «кусок описания -> категория».
 
-    Числа и короткие обрывки не запоминаем: иначе сумма «5150», записанная
-    без описания, сама становится правилом и тянет за собой старую категорию.
+    Не запоминаем числа, короткие обрывки и названия счетов: иначе «5150 сбер»
+    превращает и сумму, и карту в правило и тянет за собой старую категорию.
     """
     pattern = (pattern or "").strip().lower()[:40]
     if len(pattern) < 3 or len(LETTERS.findall(pattern)) < 3:
+        return
+    if pattern in account_words():
         return
     with conn() as c:
         c.execute("""INSERT INTO rules(pattern,category,hits) VALUES(?,?,1)
@@ -326,11 +343,15 @@ def categorize(text):
     return None
 
 
-def drop_numeric_rules():
-    """Убирает мусорные правила вида «5150», накопившиеся раньше."""
+def drop_junk_rules():
+    """Убирает мусорные правила: суммы вроде «5150» и названия счетов вроде «сбер»."""
+    accounts = account_words()
     with conn() as c:
         bad = [r["pattern"] for r in c.execute("SELECT pattern FROM rules")
-               if len(LETTERS.findall(r["pattern"])) < 3]
+               if len(LETTERS.findall(r["pattern"])) < 3 or r["pattern"] in accounts]
         for p in bad:
             c.execute("DELETE FROM rules WHERE pattern=?", (p,))
     return bad
+
+
+drop_numeric_rules = drop_junk_rules   # старое имя

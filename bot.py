@@ -219,8 +219,10 @@ def save_and_confirm(chat_id, op):
     tid = db.add_txn(op.get("date") or dt.date.today().isoformat(), op["type"], op["amount"],
                      op.get("currency", "RUB"), op["category"], account_id=account_id,
                      note=op.get("note", ""))
-    if op.get("note"):
-        db.learn_rule(op["note"].split()[0], op["category"])
+    note_words = [w for w in (op.get("note") or "").split()
+                  if w.lower() not in db.account_words()]
+    if note_words:
+        db.learn_rule(note_words[0], op["category"])
     sign = {"expense": "−", "income": "+", "transfer": "→"}[op["type"]]
     parts = [f"{sign} {money(op['amount'], op.get('currency', 'RUB'))} · {op['category']}"]
     if account_id:

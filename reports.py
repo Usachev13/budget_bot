@@ -179,6 +179,28 @@ def unsorted_count():
         return c.execute("SELECT COUNT(*) n FROM txns WHERE category=''").fetchone()["n"]
 
 
+def month_matrix(month=None):
+    """Суммы по дням и категориям за месяц — в таком виде их ждёт таблица."""
+    month = month or month_key()
+    start, end = month_bounds(month)
+    with db.conn() as c:
+        rows = c.execute("""SELECT date, category, type, SUM(amount_rub) s
+                            FROM txns WHERE date BETWEEN ? AND ?
+                            GROUP BY date, category, type""", (start, end)).fetchall()
+        kinds = {r["name"]: (r["wallet"], r["kind"]) for r in
+                 c.execute("SELECT name, wallet, kind FROM categories")}
+    days, income = {}, {}
+    for r in rows:
+        wallet, kind = kinds.get(r["category"], ("salary", r["type"]))
+        if kind == "income":
+            income[r["category"]] = income.get(r["category"], 0.0) + r["s"]
+            continue
+        days.setdefault(r["date"], {})[r["category"]] = round(r["s"], 2)
+    return {"month": month, "days": days,
+            "income": {k: round(v, 2) for k, v in income.items()},
+            "updated": dt.datetime.now().isoformat(timespec="seconds")}
+
+
 def last_txns(limit=10):
     """Последние записанные операции — для списка с кнопками удаления."""
     with db.conn() as c:
