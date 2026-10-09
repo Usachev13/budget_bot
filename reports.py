@@ -179,6 +179,16 @@ def unsorted_count():
         return c.execute("SELECT COUNT(*) n FROM txns WHERE category=''").fetchone()["n"]
 
 
+def last_txns(limit=10):
+    """Последние записанные операции — для списка с кнопками удаления."""
+    with db.conn() as c:
+        return [dict(x) for x in c.execute(
+            """SELECT t.id, t.date, t.type, t.amount, t.currency, t.amount_rub,
+                      t.category, t.note, COALESCE(a.name,'') account
+               FROM txns t LEFT JOIN accounts a ON a.id = t.account_id
+               ORDER BY t.id DESC LIMIT ?""", (limit,))]
+
+
 def card_available(account_id):
     """Свободный лимит по кредитке: лимит минус текущая задолженность."""
     with db.conn() as c:

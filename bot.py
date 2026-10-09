@@ -15,7 +15,8 @@ def call(method, **payload):
         print("telegram error:", e)
         return None
 
-MENU = [["📊 Итоги", "💳 Счета"], ["📅 День", "🗂 Разобрать"], ["↩️ Отмена", "❓ Помощь"]]
+MENU = [["📊 Итоги", "💳 Счета"], ["📅 День", "🗂 Разобрать"],
+        ["🧾 Последние", "↩️ Отмена"], ["❓ Помощь"]]
 
 COMMANDS = [
     ("итоги", "лимиты месяца, доходы, чистая позиция"),
@@ -23,6 +24,7 @@ COMMANDS = [
     ("день", "траты за сегодня"),
     ("разобрать", "категории для операций из выписок"),
     ("отмена", "удалить последнюю операцию"),
+    ("последние", "список операций с кнопками удаления"),
     ("синхрон", "обновить справочники из Google Таблицы"),
     ("дашборд", "ссылка на дашборд"),
     ("помощь", "как пользоваться"),
@@ -77,6 +79,8 @@ HELP = (
     "долг 45000 — записать текущую задолженность по карте\n"
     "поправь 1895 жильё — сменить категорию операции на эту сумму\n"
     "/отмена — удалить последнюю операцию\n"
+    "/последние — список операций с кнопками удаления\n"
+    "удали 350 — удалить операцию на эту сумму\n"
     "/дашборд — ссылка на дашборд\n\n"
     "<b>Счета</b>\n"
     "Чтобы списать с конкретной карты, добавь её название: «кофе 350 озон».\n"
@@ -114,7 +118,8 @@ def handle_update(update):
     return handle_text(chat_id, text)
 
 BUTTON_WORDS = {"📊 итоги": "итоги", "💳 счета": "счета", "📅 день": "день",
-                "🗂 разобрать": "разобрать", "↩️ отмена": "отмена", "❓ помощь": "помощь"}
+                "🗂 разобрать": "разобрать", "↩️ отмена": "отмена", "❓ помощь": "помощь",
+                "🧾 последние": "последние"}
 
 
 def handle_text(chat_id, text):
@@ -135,6 +140,10 @@ def handle_text(chat_id, text):
         return send(chat_id, "Дашборд: /dashboard?key=… (адрес и ключ в настройках)")
     if low.startswith(("отмена", "undo")):
         return undo_last(chat_id)
+    if low.startswith(("последние", "история", "список")):
+        return show_last(chat_id)
+    if low.startswith(("удали", "удалить")):
+        return delete_by_query(chat_id, text)
     if low.startswith(("синхрон", "sync", "таблица")):
         return sync_sheet(chat_id)
     if low.startswith(("разобрать", "разбор")):
@@ -250,6 +259,11 @@ def handle_callback(cb):
         group = next((g for g in reports.unsorted_groups() if g["key"] == key), None)
         reports.apply_category_to_group(group["ids"] if group else [int(tid)], "Непредвиденное")
         return review_next(chat_id)
+    if data.startswith("del|"):
+        txn_id = int(data.split("|", 1)[1])
+        delete_txn(chat_id, txn_id)
+        drop_keyboard(chat_id, cb["message"]["message_id"])
+        return show_last(chat_id)
     if data.startswith("cat|"):
         _, pid, category = data.split("|", 2)
         with db.conn() as c:
@@ -341,6 +355,52 @@ def review_next(chat_id):
             if g["count"] > 1 else
             f"{g['date']} · {money(g['sum'])}\n<code>{(g['note'] or '')[:80]}</code>")
     return send(chat_id, f"{head}\nВсего без категории: {left}\nКакая категория?", kb)
+
+def show_last(chat_id, limit=10):
+    """Последние операции с кнопками удаления — чтобы убрать не только последнюю."""
+    rows = reports.last_txns(limit)
+    if not rows:
+        return send(chat_id, "Операций пока нет.")
+    sign = {"expense": "−", "income": "+", "transfer": "→"}
+    lines, kb = ["<b>Последние операции</b>"], []
+    for i, t in enumerate(rows, start=1):
+        acc = f" · {t['account']}" if t["account"] else ""
+        lines.append(f"{i}. {t['date'][8:10]}.{t['date'][5:7]} {sign[t['type']]}"
+                     f"{money(t['amount'], t['currency'])} · {t['category']}{acc}"
+                     f"\n    <code>{(t['note'] or '')[:40]}</code>")
+        kb.append({"text": f"🗑 {i}", "callback_data": f"del|{t['id']}"})
+    rows_kb = [kb[i:i + 5] for i in range(0, len(kb), 5)]
+    lines.append("\nНажми номер, чтобы удалить.")
+    return send(chat_id, "\n".join(lines), rows_kb)
+
+
+def delete_txn(chat_id, txn_id):
+    with db.conn() as c:
+        row = c.execute("SELECT amount,currency,category,note FROM txns WHERE id=?", (txn_id,)).fetchone()
+        if not row:
+            return send(chat_id, "Такой операции уже нет.")
+        c.execute("DELETE FROM txns WHERE id=?", (txn_id,))
+    return send(chat_id, f"Удалил: {money(row['amount'], row['currency'])} · {row['category']}"
+                         f"\n<code>{(row['note'] or '')[:40]}</code>")
+
+
+def delete_by_query(chat_id, text):
+    """«удали 350» или «удали #123»."""
+    q = re.sub(r"^(удали|удалить)\s*", "", text.strip(), flags=re.I)
+    m_id = re.match(r"#?(\d+)$", q.strip()) if q.strip().startswith("#") else None
+    if m_id:
+        return delete_txn(chat_id, int(m_id.group(1)))
+    m = re.search(r"([\d][\d \u00a0]*(?:[.,]\d+)?)", q)
+    if not m:
+        return show_last(chat_id)
+    amount = float(m.group(1).replace(" ", "").replace("\u00a0", "").replace(",", "."))
+    with db.conn() as c:
+        row = c.execute("""SELECT id FROM txns WHERE ROUND(amount,2)=ROUND(?,2)
+                           ORDER BY id DESC LIMIT 1""", (amount,)).fetchone()
+    if not row:
+        return send(chat_id, f"Операции на {money(amount)} не нашёл. Посмотри /последние.")
+    return delete_txn(chat_id, row["id"])
+
 
 def undo_last(chat_id):
     """Удаляет последнюю запись и снимает незавершённые вопросы о категории."""
