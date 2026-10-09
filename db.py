@@ -291,21 +291,44 @@ def month_limits(month):
             base[r["category"]] = r["monthly_limit"]
     return base
 
+LETTERS = re.compile(r"[a-zA-Zа-яёА-ЯЁ]")
+
+
 def learn_rule(pattern, category):
-    pattern = pattern.strip().lower()[:40]
-    if len(pattern) < 3:
+    """Запоминает правило «кусок описания -> категория».
+
+    Числа и короткие обрывки не запоминаем: иначе сумма «5150», записанная
+    без описания, сама становится правилом и тянет за собой старую категорию.
+    """
+    pattern = (pattern or "").strip().lower()[:40]
+    if len(pattern) < 3 or len(LETTERS.findall(pattern)) < 3:
         return
     with conn() as c:
         c.execute("""INSERT INTO rules(pattern,category,hits) VALUES(?,?,1)
                      ON CONFLICT(pattern) DO UPDATE SET category=excluded.category, hits=hits+1""",
                   (pattern, category))
 
+
 def categorize(text):
     """Подбор категории по правилам. Возвращает название или None."""
     t = (text or "").lower()
+    if len(LETTERS.findall(t)) < 3:        # «5150» — это сумма, а не описание
+        return None
     with conn() as c:
         rows = c.execute("SELECT pattern,category FROM rules ORDER BY length(pattern) DESC").fetchall()
     for r in rows:
+        if len(LETTERS.findall(r["pattern"])) < 3:
+            continue
         if r["pattern"] in t:
             return r["category"]
     return None
+
+
+def drop_numeric_rules():
+    """Убирает мусорные правила вида «5150», накопившиеся раньше."""
+    with conn() as c:
+        bad = [r["pattern"] for r in c.execute("SELECT pattern FROM rules")
+               if len(LETTERS.findall(r["pattern"])) < 3]
+        for p in bad:
+            c.execute("DELETE FROM rules WHERE pattern=?", (p,))
+    return bad

@@ -65,7 +65,7 @@ def parse_simple(text):
         elif type_ == "transfer":
             category = "Перевод между счетами"
     return {"type": type_, "amount": amount, "currency": currency,
-            "category": category, "note": note or t, "date": dt.date.today().isoformat()}
+            "category": category, "note": note, "date": dt.date.today().isoformat()}
 
 # ------------------------------------------------------------------ Groq
 def _groq(path, **kw):
