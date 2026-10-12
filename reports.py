@@ -105,15 +105,25 @@ def trend(n=12):
     return out
 
 def ip_split_plan(amount):
-    """Как распределить деньги ИП по долям."""
-    np_ = net_position()["net"]
-    shares = dict(config.IP_SPLIT)
-    if np_ >= 0:                       # разрыв закрыт — доля уходит в инвестиции
-        shares["Инвестиции"] = shares.pop("Закрытие разрыва")
-    return {k: amount * v for k, v in shares.items()}
+    """Как распределить деньги ИП.
+
+    Первым делом гасим кредитки: пока долг есть, туда идёт всё.
+    Как только карты закрыты, работает обычное распределение.
+    """
+    debt = net_position()["debt"]
+    if debt > 0:
+        to_cards = min(amount, debt)
+        rest = amount - to_cards
+        plan = {"Закрытие кредиток": to_cards}
+        if rest > 0:
+            for k, v in config.IP_SPLIT.items():
+                plan[k] = rest * v
+        return plan
+    return {k: amount * v for k, v in config.IP_SPLIT.items()}
+
 
 def relocation():
-    """Прогресс по переезду: всё, что лежит на счетах с назначением «переезд», в шекелях."""
+    """Прогресс по переезду: накопленное плюс ожидаемая компенсация за отпуск."""
     ils_rate = db.rate("ILS") or 1
     have = 0.0
     parts = []
@@ -123,12 +133,20 @@ def relocation():
             have += in_ils
             parts.append({"name": a["name"], "amount": a["balance"],
                           "currency": a["currency"], "ils": in_ils})
-    left_days = (dt.date.fromisoformat(config.RELOCATION_DEADLINE) - dt.date.today()).days
+
+    expected_rub = float(getattr(config, "VACATION_COMPENSATION_RUB", 0) or 0)
+    expected_ils = expected_rub / ils_rate
+    deadline = dt.date.fromisoformat(config.RELOCATION_DEADLINE)
+    left_days = (deadline - dt.date.today()).days
     months_left = max(1, round(left_days / 30))
-    need = max(0.0, config.RELOCATION_GOAL_ILS - have)
+    need = max(0.0, config.RELOCATION_GOAL_ILS - have - expected_ils)
     return {"have": have, "goal": config.RELOCATION_GOAL_ILS, "need": need,
             "months_left": months_left, "per_month": need / months_left,
-            "per_month_rub": need / months_left * ils_rate, "parts": parts}
+            "per_month_rub": need / months_left * ils_rate, "parts": parts,
+            "expected_rub": expected_rub, "expected_ils": expected_ils,
+            "expected_date": getattr(config, "VACATION_COMPENSATION_DATE", ""),
+            "forecast": have + expected_ils}
+
 
 MERCHANT_STRIP = re.compile(r"[\d№#]+[\d\-/.]*")
 STOP_TAIL = ("заказ", "без ндс", "номер", "перевод по сбп", "покупка")

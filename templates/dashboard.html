@@ -159,8 +159,15 @@ document.getElementById("k-inc-d").textContent = "из них ИП и проце
 
 const rel = D.relocation;
 document.getElementById("k-rel").textContent = fmt(rel.have, "ILS");
+const relDate = rel.expected_date
+  ? new Date(rel.expected_date).toLocaleDateString("ru-RU", {month: "long", year: "numeric"})
+  : "";
 document.getElementById("k-rel-d").innerHTML =
   "цель " + fmt(rel.goal, "ILS") + " · нужно " + fmt(rel.per_month, "ILS") + "/мес (" + rel.months_left + " мес.)" +
+  (rel.expected_ils > 0
+    ? '<br>с отпускными ' + fmt(rel.forecast, "ILS") + ' <span class="src">(+' +
+      fmt(rel.expected_rub) + (relDate ? ", " + relDate : "") + ")</span>"
+    : "") +
   ((rel.parts && rel.parts.length)
     ? '<br><span class="src">' + rel.parts.map(p => fmt(p.amount, p.currency)).join(" · ") + "</span>"
     : "");
@@ -234,7 +241,10 @@ document.getElementById("k-rel-d").innerHTML =
 // ------- распределение ИП и счета
 document.getElementById("split").innerHTML =
   Object.entries(D.split).map(([k,v]) => `<div class="line"><span>${k}</span><span>${fmt(v)}</span></div>`).join("")
-  + `<div class="src" style="margin-top:6px">от ${fmt(D.ip_income)} дохода ИП и процентов за месяц</div>`;
+  + `<div class="src" style="margin-top:6px">от ${fmt(D.ip_income)} дохода ИП и процентов за месяц</div>`
+  + (D.net.debt > 0
+      ? `<div class="src">сначала закрываем кредитки: долг ${fmt(D.net.debt)}</div>`
+      : "");
 
 document.getElementById("accounts").innerHTML = D.accounts.map(a => {
   const debt = a.kind === "card" && a.balance < 0;
